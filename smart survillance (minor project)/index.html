@@ -3,43 +3,256 @@
 
 <head>
     <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Smart Surveillance Dashboard</title>
+    <meta name="description" content="AI-powered smart surveillance system with real-time anomaly detection and monitoring dashboard.">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="style.css">
 </head>
 
 <body>
 
-    <header>
-        <h1>🛡 Smart Surveillance System</h1>
-        <p>Real-time Anomaly Detection Dashboard</p>
-    </header>
+    <!-- ─── Sidebar Navigation ─────────────────────────────────── -->
+    <aside class="sidebar" id="sidebar">
+        <div class="sidebar-header">
+            <div class="logo">
+                <div class="logo-icon">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
+                    </svg>
+                </div>
+                <span class="logo-text">SentinelAI</span>
+            </div>
+        </div>
+        <nav class="sidebar-nav">
+            <a href="#" class="nav-item active" data-section="dashboard">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>
+                <span>Dashboard</span>
+            </a>
+            <a href="#" class="nav-item" data-section="livefeed">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="23 7 16 12 23 17 23 7"/><rect x="1" y="5" width="15" height="14" rx="2" ry="2"/></svg>
+                <span>Live Feed</span>
+            </a>
+            <a href="#" class="nav-item" data-section="upload">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+                <span>Upload</span>
+            </a>
+            <a href="#" class="nav-item" data-section="alerts">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 8A6 6 0 006 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 01-3.46 0"/></svg>
+                <span>Alerts</span>
+                <span class="nav-badge" id="alertBadge">0</span>
+            </a>
+            <a href="#" class="nav-item" data-section="settings">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 01-2.83 2.83l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z"/></svg>
+                <span>Settings</span>
+            </a>
+        </nav>
+        <div class="sidebar-footer">
+            <div class="system-status">
+                <span class="status-dot pulse"></span>
+                <span>System Online</span>
+            </div>
+        </div>
+    </aside>
 
-    <section class="status">
-        <span class="dot"></span>
-        <span>System Status: RUNNING</span>
-    </section>
+    <!-- ─── Main Content ───────────────────────────────────────── -->
+    <main class="main-content">
 
-    <section class="upload-section" style="text-align: center; padding: 20px;">
-        <input type="file" id="videoUpload" accept="video/*">
-        <button onclick="uploadVideo()"
-            style="padding: 10px 20px; cursor: pointer; background: #38bdf8; border: none; border-radius: 5px; color: #020617; font-weight: bold;">Upload
-            & Detect</button>
-        <div id="uploadStatus" style="margin-top: 10px; color: #cbd5f5;"></div>
-    </section>
+        <!-- Top Bar -->
+        <header class="topbar">
+            <button class="menu-toggle" id="menuToggle" aria-label="Toggle menu">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
+            </button>
+            <div class="topbar-title">
+                <h1>Dashboard</h1>
+                <p class="topbar-subtitle">Real-time anomaly monitoring</p>
+            </div>
+            <div class="topbar-actions">
+                <div class="live-indicator">
+                    <span class="live-dot"></span>
+                    <span>LIVE</span>
+                </div>
+                <div class="current-time" id="currentTime"></div>
+            </div>
+        </header>
 
-    <section class="video-container" style="text-align: center; padding: 20px; display: none;" id="videoContainer">
-        <h3 style="color: #38bdf8; margin-bottom: 10px;">Live Anomaly Detection Feed</h3>
-        <video id="resultVideo" controls
-            style="width: 80%; max-width: 800px; border: 2px solid #38bdf8; border-radius: 10px; margin: 0 auto;"></video>
-    </section>
+        <!-- ─── Stats Cards ──────────────────────────────────── -->
+        <section class="stats-grid">
+            <div class="stat-card">
+                <div class="stat-icon stat-icon--blue">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+                </div>
+                <div class="stat-info">
+                    <span class="stat-value" id="statCameras">4</span>
+                    <span class="stat-label">Active Cameras</span>
+                </div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-icon stat-icon--red">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+                </div>
+                <div class="stat-info">
+                    <span class="stat-value" id="statAnomalies">0</span>
+                    <span class="stat-label">Anomalies Detected</span>
+                </div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-icon stat-icon--green">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
+                </div>
+                <div class="stat-info">
+                    <span class="stat-value" id="statUptime">99.8%</span>
+                    <span class="stat-label">System Uptime</span>
+                </div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-icon stat-icon--purple">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="2" width="20" height="20" rx="2.18" ry="2.18"/><line x1="7" y1="2" x2="7" y2="22"/><line x1="17" y1="2" x2="17" y2="22"/><line x1="2" y1="12" x2="22" y2="12"/><line x1="2" y1="7" x2="7" y2="7"/><line x1="2" y1="17" x2="7" y2="17"/><line x1="17" y1="7" x2="22" y2="7"/><line x1="17" y1="17" x2="22" y2="17"/></svg>
+                </div>
+                <div class="stat-info">
+                    <span class="stat-value" id="statVideos">0</span>
+                    <span class="stat-label">Videos Processed</span>
+                </div>
+            </div>
+        </section>
 
-    <main class="alerts-container" id="alertsContainer">
-        <!-- Alerts injected by JS -->
+        <!-- ─── Live Camera Feed ──────────────────────────────── -->
+        <section class="content-section" id="liveFeedSection">
+            <div class="section-header">
+                <h2>Live Camera Feed</h2>
+                <div class="camera-controls">
+                    <div class="camera-status" id="cameraStatus">
+                        <span class="status-dot" id="cameraDot"></span>
+                        <span id="cameraStatusText">Camera Off</span>
+                    </div>
+                    <button class="btn btn--accent" id="startCameraBtn" onclick="startCamera()">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="23 7 16 12 23 17 23 7"/><rect x="1" y="5" width="15" height="14" rx="2" ry="2"/></svg>
+                        Start Camera
+                    </button>
+                    <button class="btn btn--outline" id="stopCameraBtn" onclick="stopCamera()" style="display:none;">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg>
+                        Stop Camera
+                    </button>
+                </div>
+            </div>
+            <div class="live-feed-wrapper" id="liveFeedWrapper">
+                <div class="live-feed-placeholder" id="liveFeedPlaceholder">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                        <polygon points="23 7 16 12 23 17 23 7"/>
+                        <rect x="1" y="5" width="15" height="14" rx="2" ry="2"/>
+                    </svg>
+                    <p>Click <strong>Start Camera</strong> to begin live surveillance</p>
+                </div>
+                <img id="liveFeedImage" class="live-feed-img" style="display:none;" alt="Live Camera Feed">
+            </div>
+            <div class="live-feed-info">
+                <div class="feed-stat">
+                    <span class="feed-stat-label">Motion Status</span>
+                    <span class="feed-stat-value" id="motionStatus">—</span>
+                </div>
+                <div class="feed-stat">
+                    <span class="feed-stat-label">Anomalies Detected</span>
+                    <span class="feed-stat-value" id="liveAnomalyCount">0</span>
+                </div>
+            </div>
+        </section>
+
+        <!-- ─── Upload Section ───────────────────────────────── -->
+        <section class="content-section" id="uploadSection">
+            <div class="section-header">
+                <h2>Upload & Analyze</h2>
+                <p>Drag & drop a video or click to browse — AI will scan for anomalies</p>
+            </div>
+            <div class="upload-zone" id="dropZone">
+                <div class="upload-zone-content">
+                    <div class="upload-icon-wrapper">
+                        <svg class="upload-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                            <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/>
+                            <polyline points="17 8 12 3 7 8"/>
+                            <line x1="12" y1="3" x2="12" y2="15"/>
+                        </svg>
+                    </div>
+                    <p class="upload-label">Drop your video file here</p>
+                    <p class="upload-sublabel">or click to browse — MP4, MOV, AVI, MKV supported</p>
+                    <input type="file" id="videoUpload" accept="video/*" hidden>
+                    <button class="btn btn--primary" id="browseBtn">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 19a2 2 0 01-2 2H4a2 2 0 01-2-2V5a2 2 0 012-2h5l2 3h9a2 2 0 012 2z"/></svg>
+                        Browse Files
+                    </button>
+                </div>
+                <!-- File selected state -->
+                <div class="upload-file-info" id="fileInfo" style="display:none;">
+                    <div class="file-icon">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="23 7 16 12 23 17 23 7"/><rect x="1" y="5" width="15" height="14" rx="2" ry="2"/></svg>
+                    </div>
+                    <div class="file-details">
+                        <span class="file-name" id="fileName"></span>
+                        <span class="file-size" id="fileSize"></span>
+                    </div>
+                    <button class="btn btn--outline btn--sm" id="removeFileBtn">Remove</button>
+                </div>
+            </div>
+
+            <!-- Upload Actions -->
+            <div class="upload-actions" id="uploadActions" style="display:none;">
+                <button class="btn btn--accent btn--lg" id="uploadBtn" onclick="uploadVideo()">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+                    Upload & Detect Anomalies
+                </button>
+            </div>
+
+            <!-- Progress Bar -->
+            <div class="progress-container" id="progressContainer" style="display:none;">
+                <div class="progress-header">
+                    <span class="progress-label" id="progressLabel">Uploading...</span>
+                    <span class="progress-percent" id="progressPercent">0%</span>
+                </div>
+                <div class="progress-track">
+                    <div class="progress-bar" id="progressBar"></div>
+                </div>
+            </div>
+
+            <!-- Status Message -->
+            <div id="uploadStatus" class="upload-status"></div>
+        </section>
+
+        <!-- ─── Video Player ─────────────────────────────────── -->
+        <section class="content-section video-section" id="videoContainer" style="display:none;">
+            <div class="section-header">
+                <h2>Detection Feed</h2>
+                <div class="detection-badge">
+                    <span class="live-dot"></span>
+                    Anomaly Detection Active
+                </div>
+            </div>
+            <div class="video-wrapper">
+                <video id="resultVideo" controls></video>
+            </div>
+        </section>
+
+        <!-- ─── Alerts Section ───────────────────────────────── -->
+        <section class="content-section">
+            <div class="section-header">
+                <h2>Recent Alerts</h2>
+                <span class="alert-count" id="alertCount">0 alerts today</span>
+            </div>
+            <div class="alerts-grid" id="alertsContainer">
+                <!-- Populated by JS -->
+                <div class="empty-state" id="emptyAlerts">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M12 22c5.523 0 10-4.477 10-10S17.523 2 12 2 2 6.477 2 12s4.477 10 10 10z"/><path d="M8 14s1.5 2 4 2 4-2 4-2"/><line x1="9" y1="9" x2="9.01" y2="9"/><line x1="15" y1="9" x2="15.01" y2="9"/></svg>
+                    <p>No anomalies detected — all clear!</p>
+                </div>
+            </div>
+        </section>
+
+        <!-- Footer -->
+        <footer class="main-footer">
+            <p>&copy; 2026 SentinelAI — Smart Surveillance System &middot; AI Powered Security</p>
+        </footer>
+
     </main>
-
-    <footer>
-        <p>© 2026 Smart Surveillance | AI Powered Security</p>
-    </footer>
 
     <script src="script.js"></script>
 </body>

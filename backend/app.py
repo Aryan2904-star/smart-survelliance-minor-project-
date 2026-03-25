@@ -16,6 +16,7 @@ CORS(app)
 
 # ─── Configuration ───────────────────────────────────────────────
 UPLOAD_FOLDER = os.path.join(BACKEND_DIR, "uploads")
+OUTPUT_FOLDER = os.path.join(BACKEND_DIR, "outputs")
 ALERTS_FOLDER = os.path.join(BACKEND_DIR, "alerts")
 ALLOWED_EXTENSIONS = {"mp4", "mov", "avi", "mkv"}
 
@@ -23,6 +24,7 @@ app.config["UPLOAD_FOLDER"] = UPLOAD_FOLDER
 app.config["MAX_CONTENT_LENGTH"] = 500 * 1024 * 1024  # 500 MB max upload
 
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
+os.makedirs(OUTPUT_FOLDER, exist_ok=True)
 os.makedirs(ALERTS_FOLDER, exist_ok=True)
 
 
@@ -233,6 +235,98 @@ def camera_status():
     })
 
 
+# ─── Video Motion Detection ─────────────────────────────────────
+
+def process_video_motion(input_path, output_path):
+    """Read a video frame-by-frame, detect motion, draw bounding boxes,
+    and write the annotated result to output_path (browser-compatible H.264).
+    Returns (motion_detected_bool, anomaly_frame_count)."""
+    import subprocess
+    import imageio_ffmpeg
+
+    cap = cv2.VideoCapture(input_path)
+    if not cap.isOpened():
+        return False, 0
+
+    fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
+    width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+    height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+
+    # Write to a temporary AVI first (OpenCV handles this reliably)
+    temp_path = output_path.rsplit(".", 1)[0] + "_temp.avi"
+    fourcc = cv2.VideoWriter_fourcc(*"XVID")
+    out = cv2.VideoWriter(temp_path, fourcc, fps, (width, height))
+
+    prev_gray = None
+    any_motion = False
+    anomaly_count = 0
+
+    while True:
+        ret, frame = cap.read()
+        if not ret:
+            break
+
+        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        gray = cv2.GaussianBlur(gray, (21, 21), 0)
+
+        motion_in_frame = False
+
+        if prev_gray is not None:
+            delta = cv2.absdiff(prev_gray, gray)
+            thresh = cv2.threshold(delta, 30, 255, cv2.THRESH_BINARY)[1]
+            thresh = cv2.dilate(thresh, None, iterations=2)
+
+            contours, _ = cv2.findContours(
+                thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE
+            )
+
+            for contour in contours:
+                if cv2.contourArea(contour) < 3000:
+                    continue
+                motion_in_frame = True
+                (x, y, w, h) = cv2.boundingRect(contour)
+                cv2.rectangle(frame, (x, y), (x + w, y + h), (0, 255, 0), 2)
+                cv2.putText(
+                    frame, "Motion Detected", (x, y - 10),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2
+                )
+
+        if motion_in_frame:
+            any_motion = True
+            anomaly_count += 1
+
+        # Status overlay
+        status_color = (0, 0, 255) if motion_in_frame else (0, 255, 0)
+        status_text = "MOTION DETECTED" if motion_in_frame else "Normal"
+        cv2.putText(frame, status_text, (10, 30),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.8, status_color, 2)
+
+        prev_gray = gray
+        out.write(frame)
+
+    cap.release()
+    out.release()
+
+    # Re-encode to browser-compatible H.264 MP4 using bundled ffmpeg
+    ffmpeg_exe = imageio_ffmpeg.get_ffmpeg_exe()
+    subprocess.run([
+        ffmpeg_exe, "-y",
+        "-i", temp_path,
+        "-c:v", "libx264",
+        "-preset", "fast",
+        "-crf", "23",
+        "-pix_fmt", "yuv420p",
+        "-movflags", "+faststart",
+        output_path
+    ], check=True, capture_output=True)
+
+    # Clean up temp file
+    if os.path.exists(temp_path):
+        os.remove(temp_path)
+
+    return any_motion, anomaly_count
+
+
 # ─── Video Upload Endpoints ─────────────────────────────────────
 
 @app.route("/api/upload", methods=["POST"])
@@ -254,17 +348,31 @@ def upload_video():
     save_path = os.path.join(app.config["UPLOAD_FOLDER"], filename)
     file.save(save_path)
 
+    # ── Run motion detection on the uploaded video ──
+    out_filename = f"processed_{filename}"
+    out_path = os.path.join(OUTPUT_FOLDER, out_filename)
+
+    try:
+        motion_found, anomaly_count = process_video_motion(save_path, out_path)
+    except Exception as e:
+        return jsonify({
+            "message": "Video uploaded but processing failed",
+            "error": str(e),
+            "saved_as": filename
+        }), 200
+
     return jsonify({
-        "message": "Video uploaded successfully",
+        "message": f"Video uploaded and processed — {'motion detected!' if motion_found else 'no motion found.'}",
         "saved_as": filename,
-        "saved_path": f"uploads/{filename}",
-        "output_video_url": f"/api/output/{filename}"
+        "motion_detected": motion_found,
+        "anomaly_count": anomaly_count,
+        "output_video_url": f"/api/output/{out_filename}"
     }), 200
 
 
 @app.route("/api/output/<filename>", methods=["GET"])
 def serve_output_video(filename):
-    return send_from_directory(app.config["UPLOAD_FOLDER"], filename)
+    return send_from_directory(OUTPUT_FOLDER, filename)
 
 
 # ─── Alerts Endpoints ───────────────────────────────────────────

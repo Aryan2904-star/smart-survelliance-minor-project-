@@ -1,5 +1,13 @@
+"""
+app.py — Smart Surveillance System (Flask Backend)
+
+Pipeline:
+  Motion detected (OpenCV MOG2) → Save snapshot → Run YOLOv8 → Generate alert
+"""
+
 import os
 import cv2
+import json
 import threading
 import time
 from datetime import datetime
@@ -7,57 +15,85 @@ from flask import Flask, request, jsonify, send_from_directory, Response
 from flask_cors import CORS
 from werkzeug.utils import secure_filename
 
-# ─── Path to frontend folder ─────────────────────────────────────
+from detector import MotionDetector, YOLODetector, Detection
+
+# ─── Paths ────────────────────────────────────────────────────
 BACKEND_DIR = os.path.dirname(os.path.abspath(__file__))
 FRONTEND_DIR = os.path.join(os.path.dirname(BACKEND_DIR), "smart survillance (minor project)")
 
 app = Flask(__name__, static_folder=FRONTEND_DIR, static_url_path="")
 CORS(app)
 
-# ─── Configuration ───────────────────────────────────────────────
+# ─── Configuration ───────────────────────────────────────────
 UPLOAD_FOLDER = os.path.join(BACKEND_DIR, "uploads")
 OUTPUT_FOLDER = os.path.join(BACKEND_DIR, "outputs")
 ALERTS_FOLDER = os.path.join(BACKEND_DIR, "alerts")
 ALLOWED_EXTENSIONS = {"mp4", "mov", "avi", "mkv"}
 
 app.config["UPLOAD_FOLDER"] = UPLOAD_FOLDER
-app.config["MAX_CONTENT_LENGTH"] = 500 * 1024 * 1024  # 500 MB max upload
+app.config["MAX_CONTENT_LENGTH"] = 500 * 1024 * 1024  # 500 MB
 
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 os.makedirs(OUTPUT_FOLDER, exist_ok=True)
 os.makedirs(ALERTS_FOLDER, exist_ok=True)
+
+# ─── App Settings ────────────────────────────────────────────
+app_settings = {
+    "conf_threshold": 0.50,
+}
+
+# ─── Detectors (initialized once) ───────────────────────────
+motion_det = MotionDetector(min_area=1000)
+yolo_det = YOLODetector(model_name="yolov8n.pt", conf_threshold=app_settings["conf_threshold"])
 
 
 def allowed_file(filename):
     return "." in filename and filename.rsplit(".", 1)[1].lower() in ALLOWED_EXTENSIONS
 
 
-# ═══════════════════════════════════════════════════════════════════
-#  LIVE CAMERA — OpenCV Motion Detection
-# ═══════════════════════════════════════════════════════════════════
+def get_color(class_name):
+    """Color in BGR for bounding box drawing."""
+    colors = {
+        "person": (0, 255, 0),       # Green
+        "cell phone": (255, 0, 255), # Magenta
+    }
+    return colors.get(class_name, (255, 255, 255))
+
+
+# ═══════════════════════════════════════════════════════════════
+#  LIVE CAMERA STREAM
+# ═══════════════════════════════════════════════════════════════
 
 class CameraStream:
     def __init__(self):
         self.camera = None
         self.is_running = False
         self.lock = threading.Lock()
+        self.raw_frame = None
+        self.raw_frame_id = 0
         self.frame = None
-        self.prev_frame = None
         self.motion_detected = False
-        self.anomaly_count = 0
         self.alerts = []
+        self._last_alert_per_class = {}  # class_name -> timestamp (float)
 
     def start(self):
         if self.is_running:
             return {"status": "already running"}
-        self.camera = cv2.VideoCapture(0)
+
+        # Try DirectShow first (more stable on Windows)
+        self.camera = cv2.VideoCapture(0, cv2.CAP_DSHOW)
+        if not self.camera.isOpened():
+            self.camera = cv2.VideoCapture(0)
+
         if not self.camera.isOpened():
             return {"error": "Could not open camera. Make sure a webcam is connected."}
+
         self.is_running = True
-        self.anomaly_count = 0
-        # Start capture thread
-        thread = threading.Thread(target=self._capture_loop, daemon=True)
-        thread.start()
+        self._last_alert_per_class = {}
+
+        # Dual-thread: capture + process (prevents OpenCV/PyTorch deadlocks)
+        threading.Thread(target=self._capture_loop, daemon=True).start()
+        threading.Thread(target=self._process_loop, daemon=True).start()
         return {"status": "started"}
 
     def stop(self):
@@ -66,98 +102,179 @@ class CameraStream:
         if self.camera:
             self.camera.release()
             self.camera = None
+        self.raw_frame = None
         self.frame = None
-        self.prev_frame = None
         return {"status": "stopped"}
 
+    # ─── Capture Thread ──────────────────────────────────────
     def _capture_loop(self):
-        """Continuously capture frames and run motion detection."""
         while self.is_running and self.camera and self.camera.isOpened():
-            ret, raw_frame = self.camera.read()
-            if not ret:
-                break
+            ret, frame = self.camera.read()
+            if ret:
+                frame = cv2.resize(frame, (640, 480))
+                with self.lock:
+                    self.raw_frame = frame
+                    self.raw_frame_id += 1
+            time.sleep(0.01)
 
-            # Resize for performance
-            raw_frame = cv2.resize(raw_frame, (640, 480))
+    # ─── Processing Thread ───────────────────────────────────
+    def _process_loop(self):
+        from concurrent.futures import ThreadPoolExecutor
 
-            # ─── Motion Detection ────────────────────────────
-            gray = cv2.cvtColor(raw_frame, cv2.COLOR_BGR2GRAY)
-            gray = cv2.GaussianBlur(gray, (21, 21), 0)
+        last_processed_id = -1
+        frame_count = 0
 
-            processed = raw_frame.copy()
-            self.motion_detected = False
+        # Async YOLO so it doesn't block the video stream
+        yolo_executor = ThreadPoolExecutor(max_workers=1)
+        yolo_future = None
+        last_yolo_boxes = []       # persist YOLO boxes between frames
+        last_yolo_time = 0
 
-            if self.prev_frame is not None:
-                # Compute difference between current and previous frame
-                delta = cv2.absdiff(self.prev_frame, gray)
-                thresh = cv2.threshold(delta, 30, 255, cv2.THRESH_BINARY)[1]
-                thresh = cv2.dilate(thresh, None, iterations=2)
+        def run_yolo(frame_copy):
+            """Worker function for thread pool."""
+            return yolo_det.detect(frame_copy)
 
-                # Find contours (areas of motion)
-                contours, _ = cv2.findContours(
-                    thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE
-                )
+        while self.is_running:
+            # Grab latest frame
+            with self.lock:
+                if self.raw_frame is None or self.raw_frame_id == last_processed_id:
+                    frame_to_process = None
+                else:
+                    frame_to_process = self.raw_frame.copy()
+                    last_processed_id = self.raw_frame_id
 
-                for contour in contours:
-                    area = cv2.contourArea(contour)
-                    if area < 3000:
-                        continue  # Skip tiny movements
+            if frame_to_process is None:
+                time.sleep(0.005)
+                continue
 
-                    self.motion_detected = True
-                    (x, y, w, h) = cv2.boundingRect(contour)
+            processed = frame_to_process.copy()
+            current_time = time.time()
 
-                    # Draw green bounding box around motion
-                    cv2.rectangle(processed, (x, y), (x + w, y + h), (0, 255, 0), 2)
-                    cv2.putText(
-                        processed, "Motion Detected", (x, y - 10),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2
-                    )
+            # ── Step 1: Motion Detection (returns list of bbox tuples) ──
+            motion_boxes = motion_det.detect(frame_to_process)
+            has_motion = len(motion_boxes) > 0
+            self.motion_detected = has_motion
 
-                # If significant motion, generate alert
-                if self.motion_detected:
-                    self.anomaly_count += 1
-                    # Save alert frame every 30 detections (avoid flooding)
-                    if self.anomaly_count % 30 == 1:
-                        self._save_alert(processed)
+            # ── Step 2: Draw GREEN rectangles around motion regions ──
+            for (mx1, my1, mx2, my2) in motion_boxes:
+                cv2.rectangle(processed, (mx1, my1), (mx2, my2), (0, 255, 0), 2)
 
-            self.prev_frame = gray
+            # ── Step 3: Async YOLO ───────────────────────────
+            # Collect finished YOLO results
+            if yolo_future is not None and yolo_future.done():
+                try:
+                    result_dets = yolo_future.result()
+                    last_yolo_boxes = result_dets[:5]
+                    # Save alert
+                    self._save_alert(frame_to_process, last_yolo_boxes)
+                except Exception as e:
+                    print(f"[YOLO ERROR] {e}", flush=True)
+                    last_yolo_boxes = []
+                yolo_future = None
 
-            # ─── Overlay status info ─────────────────────────
-            status_color = (0, 0, 255) if self.motion_detected else (0, 255, 0)
-            status_text = "MOTION DETECTED" if self.motion_detected else "Normal"
-            cv2.putText(
-                processed, status_text, (10, 30),
-                cv2.FONT_HERSHEY_SIMPLEX, 0.8, status_color, 2
-            )
-            cv2.putText(
-                processed,
-                datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                (10, processed.shape[0] - 15),
-                cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1
-            )
+            # Dispatch new YOLO when motion detected, no job pending,
+            # and at least 0.3s since last run
+            if has_motion and yolo_future is None and (current_time - last_yolo_time) > 0.3:
+                yolo_det.conf_threshold = app_settings["conf_threshold"]
+                frame_copy = frame_to_process.copy()
+                yolo_future = yolo_executor.submit(run_yolo, frame_copy)
+                last_yolo_time = current_time
+                print(f"[YOLO] Dispatched at frame {frame_count}", flush=True)
+
+            # If motion but no YOLO result yet, still save motion-only alert
+            if has_motion and len(last_yolo_boxes) == 0 and yolo_future is None:
+                self._save_alert(frame_to_process, [])
+
+            # Clear YOLO boxes after 2s of no motion
+            if not has_motion and (current_time - last_yolo_time) > 2.0:
+                last_yolo_boxes = []
+
+            # ── Step 4: Draw YOLO bounding boxes (on top of motion) ──
+            for det in last_yolo_boxes:
+                x1, y1, x2, y2 = det.bbox
+                color = get_color(det.class_name)
+
+                cv2.rectangle(processed, (x1, y1), (x2, y2), color, 2)
+
+                label = f"{det.class_name} {int(det.confidence * 100)}%"
+                (tw, th), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.5, 1)
+                cv2.rectangle(processed, (x1, y1 - th - 5), (x1 + tw, y1), color, -1)
+                cv2.putText(processed, label, (x1, y1 - 3),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 0), 1)
+
+            # ── Status overlay ───────────────────────────────
+            if last_yolo_boxes:
+                status_text = "Tracking Active"
+                status_color = (0, 200, 255)
+            elif has_motion:
+                status_text = "Motion Detected"
+                status_color = (0, 255, 255)
+            else:
+                status_text = "Normal"
+                status_color = (0, 255, 0)
+
+            cv2.putText(processed, status_text, (10, 30),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.8, status_color, 2)
+
+            cv2.putText(processed, datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                        (10, processed.shape[0] - 15),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
 
             with self.lock:
                 self.frame = processed
 
-            time.sleep(0.03)  # ~30 FPS
+            frame_count += 1
+            time.sleep(0.005)
 
-    def _save_alert(self, frame):
-        """Save a frame as an alert."""
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        filename = f"alert_{timestamp}.jpg"
-        filepath = os.path.join(ALERTS_FOLDER, filename)
-        cv2.imwrite(filepath, frame)
-        self.alerts.append({
-            "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-            "description": "Motion detected in surveillance area",
-            "frame_path": filename
-        })
-        # Keep only last 50 alerts
+
+    # ─── Alert Saving ────────────────────────────────────────
+    def _save_alert(self, frame, detections):
+        """Save snapshot + JSON alert. Debounces per class (30 seconds)."""
+        now = time.time()
+
+        # Determine the alert class
+        if detections:
+            # Take the highest-confidence detection
+            best = max(detections, key=lambda d: d.confidence)
+            alert_class = best.class_name
+            alert_conf = best.confidence
+        else:
+            alert_class = "unknown"
+            alert_conf = 0.0
+
+        # Debounce: skip if same class was alerted within 30 seconds
+        if alert_class in self._last_alert_per_class:
+            if (now - self._last_alert_per_class[alert_class]) < 30.0:
+                return
+        self._last_alert_per_class[alert_class] = now
+
+        # File names
+        now_dt = datetime.now()
+        ts = now_dt.strftime("%Y%m%d_%H%M%S")
+        iso = now_dt.strftime("%Y-%m-%dT%H:%M:%S")
+        jpg_name = f"alert_{ts}.jpg"
+        json_name = f"alert_{ts}.json"
+
+        # Save snapshot
+        cv2.imwrite(os.path.join(ALERTS_FOLDER, jpg_name), frame)
+
+        # Save JSON sidecar
+        alert_data = {
+            "timestamp": iso,
+            "motion": True,
+            "class": alert_class,
+            "confidence": alert_conf,
+            "snapshot": f"alerts/{jpg_name}",
+        }
+        with open(os.path.join(ALERTS_FOLDER, json_name), "w") as f:
+            json.dump(alert_data, f)
+
+        # Keep in-memory list for fast API responses
+        self.alerts.append(alert_data)
         if len(self.alerts) > 50:
             self.alerts = self.alerts[-50:]
 
     def get_frame_bytes(self):
-        """Get current frame as JPEG bytes."""
         with self.lock:
             if self.frame is None:
                 return None
@@ -165,12 +282,10 @@ class CameraStream:
             return buffer.tobytes()
 
 
-# Global camera instance
 camera_stream = CameraStream()
 
 
 def generate_mjpeg():
-    """Generator that yields MJPEG frames for streaming."""
     while camera_stream.is_running:
         frame_bytes = camera_stream.get_frame_bytes()
         if frame_bytes:
@@ -178,37 +293,128 @@ def generate_mjpeg():
                 b"--frame\r\n"
                 b"Content-Type: image/jpeg\r\n\r\n" + frame_bytes + b"\r\n"
             )
-        time.sleep(0.033)  # ~30 FPS
+        time.sleep(0.033)
 
 
-# ═══════════════════════════════════════════════════════════════════
-#  ROUTES — Serve Frontend
-# ═══════════════════════════════════════════════════════════════════
+# ═══════════════════════════════════════════════════════════════
+#  VIDEO UPLOAD PROCESSING
+# ═══════════════════════════════════════════════════════════════
+
+def process_video(input_path, output_path):
+    """Process uploaded video: motion → YOLO → annotated output."""
+    cap = cv2.VideoCapture(input_path)
+    if not cap.isOpened():
+        return False, 0, {}
+
+    fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
+    width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+    height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+
+    fourcc = cv2.VideoWriter_fourcc(*"mp4v")
+    out = cv2.VideoWriter(output_path, fourcc, int(fps), (width, height))
+
+    # Fresh motion detector for this video
+    vid_motion_det = MotionDetector(min_area=1000)
+    vid_yolo_det = YOLODetector(model_name="yolov8n.pt", conf_threshold=app_settings["conf_threshold"])
+
+    any_motion = False
+    motion_frame_count = 0
+    class_counts = {}
+
+    while True:
+        ret, frame = cap.read()
+        if not ret:
+            break
+
+        processed = frame.copy()
+        motion_boxes = vid_motion_det.detect(frame)
+        has_motion = len(motion_boxes) > 0
+
+        # Draw green rectangles around motion
+        for (mx1, my1, mx2, my2) in motion_boxes:
+            cv2.rectangle(processed, (mx1, my1), (mx2, my2), (0, 255, 0), 2)
+
+        detections = []
+        if has_motion:
+            detections = vid_yolo_det.detect(frame)
+            any_motion = True
+            motion_frame_count += 1
+
+            # Count classes
+            for det in detections:
+                class_counts[det.class_name] = class_counts.get(det.class_name, 0) + 1
+
+        # Draw YOLO boxes
+        for det in detections:
+            x1, y1, x2, y2 = det.bbox
+            color = get_color(det.class_name)
+            cv2.rectangle(processed, (x1, y1), (x2, y2), color, 2)
+            label = f"{det.class_name} {int(det.confidence * 100)}%"
+            (tw, th), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.5, 1)
+            cv2.rectangle(processed, (x1, y1 - th - 5), (x1 + tw, y1), color, -1)
+            cv2.putText(processed, label, (x1, y1 - 3),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 0), 1)
+
+        # Status text
+        if detections:
+            status = "Tracking Active"
+            sc = (0, 200, 255)
+        elif has_motion:
+            status = "Motion Detected"
+            sc = (0, 255, 255)
+        else:
+            status = "Normal"
+            sc = (0, 255, 0)
+
+        cv2.putText(processed, status, (10, 30),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.8, sc, 2)
+        cv2.putText(processed, datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                    (10, processed.shape[0] - 15),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
+
+        out.write(processed)
+
+    cap.release()
+    out.release()
+    return any_motion, motion_frame_count, class_counts
+
+
+# ═══════════════════════════════════════════════════════════════
+#  ROUTES
+# ═══════════════════════════════════════════════════════════════
 
 @app.route("/")
 def serve_index():
     return send_from_directory(FRONTEND_DIR, "index.html")
 
 
-# ═══════════════════════════════════════════════════════════════════
-#  ROUTES — API
-# ═══════════════════════════════════════════════════════════════════
-
 @app.route("/api/test", methods=["GET"])
 def test():
     return jsonify({"message": "Backend working"})
 
 
-# ─── Live Camera Endpoints ───────────────────────────────────────
+@app.route("/api/settings", methods=["GET"])
+def get_settings():
+    return jsonify(app_settings)
+
+
+@app.route("/api/settings", methods=["POST"])
+def update_settings():
+    data = request.json
+    if "conf_threshold" in data:
+        app_settings["conf_threshold"] = float(data["conf_threshold"])
+    return jsonify({"status": "success", "settings": app_settings})
+
+
+# ─── Live Camera ─────────────────────────────────────────────
 
 @app.route("/api/live", methods=["GET"])
 def live_stream():
-    """MJPEG video stream endpoint."""
     if not camera_stream.is_running:
         return jsonify({"error": "Camera is not running"}), 400
     return Response(
         generate_mjpeg(),
-        mimetype="multipart/x-mixed-replace; boundary=frame"
+        mimetype="multipart/x-mixed-replace; boundary=frame",
     )
 
 
@@ -222,112 +428,18 @@ def start_camera():
 
 @app.route("/api/live/stop", methods=["POST"])
 def stop_camera():
-    result = camera_stream.stop()
-    return jsonify(result)
+    return jsonify(camera_stream.stop())
 
 
 @app.route("/api/live/status", methods=["GET"])
-def camera_status():
+def camera_status_endpoint():
     return jsonify({
         "is_running": camera_stream.is_running,
         "motion_detected": camera_stream.motion_detected,
-        "anomaly_count": camera_stream.anomaly_count
     })
 
 
-# ─── Video Motion Detection ─────────────────────────────────────
-
-def process_video_motion(input_path, output_path):
-    """Read a video frame-by-frame, detect motion, draw bounding boxes,
-    and write the annotated result to output_path (browser-compatible H.264).
-    Returns (motion_detected_bool, anomaly_frame_count)."""
-    import subprocess
-    import imageio_ffmpeg
-
-    cap = cv2.VideoCapture(input_path)
-    if not cap.isOpened():
-        return False, 0
-
-    fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
-    width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-    height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-
-    # Write to a temporary AVI first (OpenCV handles this reliably)
-    temp_path = output_path.rsplit(".", 1)[0] + "_temp.avi"
-    fourcc = cv2.VideoWriter_fourcc(*"XVID")
-    out = cv2.VideoWriter(temp_path, fourcc, fps, (width, height))
-
-    prev_gray = None
-    any_motion = False
-    anomaly_count = 0
-
-    while True:
-        ret, frame = cap.read()
-        if not ret:
-            break
-
-        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-        gray = cv2.GaussianBlur(gray, (21, 21), 0)
-
-        motion_in_frame = False
-
-        if prev_gray is not None:
-            delta = cv2.absdiff(prev_gray, gray)
-            thresh = cv2.threshold(delta, 30, 255, cv2.THRESH_BINARY)[1]
-            thresh = cv2.dilate(thresh, None, iterations=2)
-
-            contours, _ = cv2.findContours(
-                thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE
-            )
-
-            for contour in contours:
-                if cv2.contourArea(contour) < 3000:
-                    continue
-                motion_in_frame = True
-                (x, y, w, h) = cv2.boundingRect(contour)
-                cv2.rectangle(frame, (x, y), (x + w, y + h), (0, 255, 0), 2)
-                cv2.putText(
-                    frame, "Motion Detected", (x, y - 10),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2
-                )
-
-        if motion_in_frame:
-            any_motion = True
-            anomaly_count += 1
-
-        # Status overlay
-        status_color = (0, 0, 255) if motion_in_frame else (0, 255, 0)
-        status_text = "MOTION DETECTED" if motion_in_frame else "Normal"
-        cv2.putText(frame, status_text, (10, 30),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.8, status_color, 2)
-
-        prev_gray = gray
-        out.write(frame)
-
-    cap.release()
-    out.release()
-
-    # Re-encode to browser-compatible H.264 MP4 using bundled ffmpeg
-    ffmpeg_exe = imageio_ffmpeg.get_ffmpeg_exe()
-    subprocess.run([
-        ffmpeg_exe, "-y",
-        "-i", temp_path,
-        "-c:v", "libx264",
-        "-preset", "fast",
-        "-crf", "23",
-        "-pix_fmt", "yuv420p",
-        "-movflags", "+faststart",
-        output_path
-    ], check=True, capture_output=True)
-
-    # Clean up temp file
-    if os.path.exists(temp_path):
-        os.remove(temp_path)
-
-    return any_motion, anomaly_count
-
-
-# ─── Video Upload Endpoints ─────────────────────────────────────
+# ─── Upload ──────────────────────────────────────────────────
 
 @app.route("/api/upload", methods=["POST"])
 def upload_video():
@@ -335,38 +447,35 @@ def upload_video():
         return jsonify({"error": "No video file provided. Use field name 'video'."}), 400
 
     file = request.files["video"]
-
     if file.filename == "":
         return jsonify({"error": "No file selected."}), 400
 
     if not allowed_file(file.filename):
-        return jsonify({
-            "error": f"File type not allowed. Allowed: {', '.join(ALLOWED_EXTENSIONS)}"
-        }), 400
+        return jsonify({"error": f"File type not allowed. Allowed: {', '.join(ALLOWED_EXTENSIONS)}"}), 400
 
     filename = secure_filename(file.filename)
     save_path = os.path.join(app.config["UPLOAD_FOLDER"], filename)
     file.save(save_path)
 
-    # ── Run motion detection on the uploaded video ──
     out_filename = f"processed_{filename}"
     out_path = os.path.join(OUTPUT_FOLDER, out_filename)
 
     try:
-        motion_found, anomaly_count = process_video_motion(save_path, out_path)
+        motion_found, motion_frame_count, class_counts = process_video(save_path, out_path)
     except Exception as e:
         return jsonify({
             "message": "Video uploaded but processing failed",
             "error": str(e),
-            "saved_as": filename
+            "saved_as": filename,
         }), 200
 
     return jsonify({
-        "message": f"Video uploaded and processed — {'motion detected!' if motion_found else 'no motion found.'}",
+        "message": f"Video processed — {'motion detected!' if motion_found else 'no motion found.'}",
         "saved_as": filename,
         "motion_detected": motion_found,
-        "anomaly_count": anomaly_count,
-        "output_video_url": f"/api/output/{out_filename}"
+        "motion_frame_count": motion_frame_count,
+        "detection_summary": class_counts,
+        "output_video_url": f"/api/output/{out_filename}",
     }), 200
 
 
@@ -375,7 +484,7 @@ def serve_output_video(filename):
     return send_from_directory(OUTPUT_FOLDER, filename)
 
 
-# ─── Alerts Endpoints ───────────────────────────────────────────
+# ─── Alerts ──────────────────────────────────────────────────
 
 @app.route("/api/alerts", methods=["GET"])
 def get_alerts():
@@ -387,13 +496,13 @@ def serve_alert_frame(filename):
     return send_from_directory(ALERTS_FOLDER, filename)
 
 
-# ═══════════════════════════════════════════════════════════════════
-#  Run Server
-# ═══════════════════════════════════════════════════════════════════
+# ═══════════════════════════════════════════════════════════════
+#  ENTRY POINT
+# ═══════════════════════════════════════════════════════════════
 
 if __name__ == "__main__":
-    print(f"[OK] Upload folder: {UPLOAD_FOLDER}")
-    print(f"[OK] Alerts folder: {ALERTS_FOLDER}")
+    print(f"[OK] Upload folder  : {UPLOAD_FOLDER}")
+    print(f"[OK] Alerts folder  : {ALERTS_FOLDER}")
     print(f"[OK] Frontend folder: {FRONTEND_DIR}")
     print("[START] Flask server running on http://127.0.0.1:5000")
     app.run(debug=True, host="127.0.0.1", port=5000, threaded=True)

@@ -304,6 +304,9 @@ class CameraStream:
 
             # ── Step 3: Async YOLO ─────────────────────────────────
             # Collect finished YOLO result
+            save_alert_this_frame = False
+            alert_dets_to_save = []
+
             if yolo_future is not None and yolo_future.done():
                 try:
                     result_dets = yolo_future.result()
@@ -311,13 +314,13 @@ class CameraStream:
                         last_yolo_boxes = result_dets[:5]
                         names = [(d.class_name, d.confidence) for d in last_yolo_boxes]
                         print(f"[YOLO] Detected: {names}", flush=True)
-                        self._save_alert(frame_to_process, last_yolo_boxes)
+                        save_alert_this_frame = True
+                        alert_dets_to_save = last_yolo_boxes
                     else:
-                        # YOLO ran but found nothing — keep showing previous boxes
-                        # so the label doesn't flicker off between runs
                         print(f"[YOLO] No detections (conf={app_settings['conf_threshold']})", flush=True)
-                        if has_motion and not last_yolo_boxes:
-                            self._save_alert(frame_to_process, [])
+                        if in_active_window:
+                            save_alert_this_frame = True
+                            alert_dets_to_save = []
                 except Exception as e:
                     print(f"[YOLO ERROR] {e}", flush=True)
                 yolo_future = None
@@ -416,7 +419,10 @@ class CameraStream:
                 # Save anomaly alert (debounced)
                 if (current_time - self._last_anomaly_time) > ANOMALY_DEBOUNCE_SECS:
                     self._last_anomaly_time = current_time
-                    self._save_anomaly_alert(frame_to_process, ar)
+                    self._save_anomaly_alert(processed.copy(), ar)
+
+            if save_alert_this_frame:
+                self._save_alert(processed.copy(), alert_dets_to_save)
 
             with self.lock:
                 self.frame = processed

@@ -26,9 +26,10 @@ const progressLabel   = document.getElementById("progressLabel");
 
 // ─── Page Titles ────────────────────────────────────────────
 const PAGE_META = {
-    dashboard: { title: "Dashboard", subtitle: "Real-time surveillance" },
+    dashboard: { title: "Dashboard",       subtitle: "Real-time surveillance" },
     upload:    { title: "Upload & Analyze", subtitle: "Upload video for motion analysis" },
-    alerts:    { title: "Alerts", subtitle: "Motion detection history" },
+    alerts:    { title: "Alerts",           subtitle: "Motion detection history" },
+    anomaly:   { title: "Anomaly AI",       subtitle: "Autoencoder anomaly detection — Fighting · Robbery · Stealing · Shooting · Burglary" },
 };
 
 // ═══════════════════════════════════════════════════════════
@@ -329,13 +330,42 @@ function fetchAlerts() {
                 else if (clsName === "cell phone") badgeStyle = "background-color: #d946ef; color: white;"; // magenta
                 else if (clsName === "motion") badgeStyle = "background-color: #eab308; color: black;"; // yellow
 
+                // Build snapshot or clip media element
+                const clipUrl  = alert.clip  ? `${API_BASE}/${alert.clip}`  : "";
+                const snapUrl  = alert.snapshot
+                    ? (alert.snapshot.startsWith('http') ? alert.snapshot : `${API_BASE}/${alert.snapshot}`)
+                    : (alert.frame_path ? `${API_BASE}/alerts/${alert.frame_path}` : "");
+
+                let mediaHTML = "";
+                if (clipUrl) {
+                    // Show video clip with snapshot as poster
+                    mediaHTML = `
+                        <div class="alert-media">
+                            <video
+                                src="${clipUrl}"
+                                poster="${snapUrl}"
+                                controls
+                                muted
+                                preload="metadata"
+                                style="width:100%;max-height:180px;border-radius:8px;cursor:pointer;background:#000;"
+                                title="Detection clip — click to play"
+                            ></video>
+                            <span class="clip-badge">📹 Clip</span>
+                        </div>`;
+                } else if (snapUrl) {
+                    mediaHTML = `<img src="${snapUrl}" onerror="this.style.display='none'" style="width:100%;max-height:180px;object-fit:cover;border-radius:8px;">`;
+                }
 
                 card.innerHTML = `
-                    ${imgPath ? `<img src="${imgPath}" onerror="this.style.display='none'">` : ""}
+                    ${mediaHTML}
                     <div class="alert-info">
-                        <h3 style="display:flex; align-items:center;"><span class="alert-type-badge" style="${badgeStyle} text-transform: capitalize;">${clsName}</span> ${speedHTML}</h3>
+                        <h3 style="display:flex; align-items:center; gap:6px;">
+                            <span class="alert-type-badge" style="${badgeStyle} text-transform: capitalize;">${clsName}</span>
+                            ${speedHTML}
+                        </h3>
                         <p>${(alert.timestamp || "").replace('T', ' ')}</p>
-                        <p style="font-size: 12px; color: #94a3b8;">${alert.confidence ? 'Confidence: ' + confText : (alert.description || 'Motion')}</p>
+                        <p style="font-size: 12px; color: #94a3b8;">${alert.confidence ? 'Confidence: ' + confText : (alert.description || 'Motion detected')}</p>
+                        ${clipUrl ? `<a href="${clipUrl}" download style="font-size:12px;color:#60a5fa;text-decoration:none;">⬇ Download clip</a>` : ""}
                     </div>
                 `;
                 alertsContainer.appendChild(card);
@@ -347,6 +377,138 @@ function fetchAlerts() {
 // ─── Initial Load & Polling ─────────────────────────────────
 fetchAlerts();
 setInterval(fetchAlerts, 5000);
+
+// ═══════════════════════════════════════════════════════════
+//  ANOMALY AI PANEL
+// ═══════════════════════════════════════════════════════════
+
+function fetchAnomalyStatus() {
+    fetch(`${API_BASE}/api/anomaly/status`)
+        .then(r => r.json())
+        .then(data => {
+            const pill     = document.getElementById('anomalyModelStatus');
+            const dot      = document.getElementById('anomalyModelDot');
+            const text     = document.getElementById('anomalyModelText');
+            const banner   = document.getElementById('anomalyInfoBanner');
+            const catPills = document.getElementById('anomalyCategoryPills');
+
+            if (data.model_loaded) {
+                if (pill)  pill.className = 'anomaly-model-pill anomaly-model-pill--ready';
+                if (dot)   dot.classList.add('pulse');
+                if (text)  text.textContent = `Model Active — threshold: ${data.threshold ? data.threshold.toFixed(5) : 'n/a'}`;
+                if (banner) banner.style.display = 'none';
+                if (catPills && data.detects && data.detects.length) {
+                    catPills.style.display = 'flex';
+                    catPills.innerHTML = data.detects
+                        .map(c => `<span class="anomaly-category-pill">${c}</span>`)
+                        .join('');
+                }
+            } else {
+                if (pill)  pill.className = 'anomaly-model-pill anomaly-model-pill--missing';
+                if (text)  text.textContent = 'Model Not Loaded';
+                if (banner) banner.style.display = 'flex';
+                if (catPills) catPills.style.display = 'none';
+            }
+        })
+        .catch(() => {});
+}
+
+function renderAnomalyCard(alert) {
+    const sev = alert.severity || 'unknown';
+    const sevColors = { low: '#f97316', medium: '#ef4444', high: '#dc2626' };
+    const sevColor = sevColors[sev] || '#6b7280';
+
+    const snapUrl = alert.snapshot
+        ? (alert.snapshot.startsWith('http') ? alert.snapshot : `${API_BASE}/${alert.snapshot}`)
+        : '';
+    const clipUrl = alert.clip && alert.clip !== ''
+        ? (alert.clip.startsWith('http') ? alert.clip : `${API_BASE}/${alert.clip}`)
+        : '';
+
+    let mediaHTML = '';
+    if (clipUrl) {
+        mediaHTML = `
+            <div class="alert-media">
+                <video src="${clipUrl}" poster="${snapUrl}" controls muted preload="metadata"
+                       style="width:100%;max-height:180px;border-radius:8px 8px 0 0;background:#000;"
+                       title="Anomaly clip"></video>
+                <span class="clip-badge">📹 Clip</span>
+            </div>`;
+    } else if (snapUrl) {
+        mediaHTML = `<img src="${snapUrl}" onerror="this.style.display='none'"
+            style="width:100%;max-height:180px;object-fit:cover;border-radius:8px 8px 0 0;">`;
+    }
+
+    const conf = Math.round((alert.confidence || 0) * 100);
+    const ts   = (alert.timestamp || '').replace('T', ' ').slice(0, 19);
+    const err  = alert.reconstruction_error ? alert.reconstruction_error.toFixed(5) : 'n/a';
+    const thr  = alert.threshold            ? alert.threshold.toFixed(5)            : 'n/a';
+
+    return `
+        <div class="alert-card anomaly-card" style="border-left: 3px solid ${sevColor};">
+            ${mediaHTML}
+            <div class="alert-info">
+                <h3 style="display:flex;align-items:center;gap:6px;">
+                    <span class="alert-type-badge" style="background:${sevColor};color:#fff;">
+                        ${sev.toUpperCase()}
+                    </span>
+                    <span style="font-size:0.75rem;color:var(--text-muted);font-weight:600;">ANOMALY</span>
+                </h3>
+                <p>${ts}</p>
+                <p style="font-size:12px;color:#94a3b8;">Confidence: ${conf}%</p>
+                <p style="font-size:11px;color:var(--text-muted);">Error: ${err} &nbsp;/&nbsp; Threshold: ${thr}</p>
+                ${clipUrl ? `<a href="${clipUrl}" download style="font-size:12px;color:#60a5fa;text-decoration:none;">&#11015; Download clip</a>` : ''}
+            </div>
+        </div>`;
+}
+
+function fetchAnomalyAlerts() {
+    fetch(`${API_BASE}/api/alerts/anomaly`)
+        .then(r => r.json())
+        .then(data => {
+            const count   = data.count || 0;
+            const alerts  = data.alerts || [];
+
+            const statEl  = document.getElementById('statAnomalyCount');
+            const badge   = document.getElementById('anomalyNavBadge');
+            const countEl = document.getElementById('anomalyCount');
+            if (statEl)  statEl.textContent  = count;
+            if (countEl) countEl.textContent = `${count} event${count !== 1 ? 's' : ''}`;
+            if (badge) {
+                badge.textContent   = count;
+                badge.style.display = count > 0 ? '' : 'none';
+            }
+
+            const section = document.getElementById('anomalySection');
+            if (!section || section.style.display === 'none') return;
+            const container = document.getElementById('anomalyAlertsContainer');
+            if (!container) return;
+
+            if (alerts.length === 0) {
+                container.innerHTML = `
+                    <div class="empty-state">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                            <path d="M12 22c5.523 0 10-4.477 10-10S17.523 2 12 2 2 6.477 2 12s4.477 10 10 10z"/>
+                            <path d="M8 14s1.5 2 4 2 4-2 4-2"/>
+                            <line x1="9" y1="9" x2="9.01" y2="9"/>
+                            <line x1="15" y1="9" x2="15.01" y2="9"/>
+                        </svg>
+                        <p>No anomalies detected &mdash; all clear!</p>
+                    </div>`;
+                return;
+            }
+            container.innerHTML = alerts.map(renderAnomalyCard).join('');
+        })
+        .catch(() => {});
+}
+
+// Start anomaly polling
+fetchAnomalyStatus();
+fetchAnomalyAlerts();
+setInterval(fetchAnomalyStatus, 30000);
+setInterval(fetchAnomalyAlerts, 10000);
+
+
 
 // ═══════════════════════════════════════════════════════════
 //  LIVE CAMERA CONTROLS

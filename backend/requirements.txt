@@ -3,3 +3,4 @@ flask-cors
 opencv-python
 ultralytics
 numpy
+tensorflow>=2.12.0

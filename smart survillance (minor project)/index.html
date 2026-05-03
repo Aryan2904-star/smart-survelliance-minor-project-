@@ -40,6 +40,11 @@
                 <span>Alerts</span>
                 <span class="nav-badge" id="alertBadge">0</span>
             </a>
+            <a href="#" class="nav-item" data-section="anomaly" id="navAnomaly">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+                <span>Anomaly AI</span>
+                <span class="nav-badge nav-badge--anomaly" id="anomalyNavBadge" style="display:none;">!</span>
+            </a>
         </nav>
         <div class="sidebar-footer">
             <div class="system-status">
@@ -97,6 +102,15 @@
                 <div class="stat-info">
                     <span class="stat-value" id="statVideos">0</span>
                     <span class="stat-label">Videos Processed</span>
+                </div>
+            </div>
+            <div class="stat-card stat-card--anomaly">
+                <div class="stat-icon stat-icon--red">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+                </div>
+                <div class="stat-info">
+                    <span class="stat-value" id="statAnomalyCount">0</span>
+                    <span class="stat-label">Anomaly Alerts</span>
                 </div>
             </div>
         </section>
@@ -249,6 +263,44 @@
                 <div class="empty-state" id="emptyAlerts">
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M12 22c5.523 0 10-4.477 10-10S17.523 2 12 2 2 6.477 2 12s4.477 10 10 10z"/><path d="M8 14s1.5 2 4 2 4-2 4-2"/><line x1="9" y1="9" x2="9.01" y2="9"/><line x1="15" y1="9" x2="15.01" y2="9"/></svg>
                     <p>No motion detected — all clear!</p>
+                </div>
+            </div>
+        </section>
+
+        <!-- ─── Anomaly AI Section ───────────────────────────── -->
+        <section class="content-section page-section" id="anomalySection" data-page="anomaly" style="display:none;">
+            <div class="section-header">
+                <h2>Anomaly AI Detection</h2>
+                <div id="anomalyModelStatus" class="anomaly-model-pill anomaly-model-pill--unknown">
+                    <span class="status-dot" id="anomalyModelDot"></span>
+                    <span id="anomalyModelText">Checking model...</span>
+                </div>
+            </div>
+
+            <!-- Model Info Banner -->
+            <div id="anomalyInfoBanner" class="anomaly-banner" style="display:none;">
+                <div class="anomaly-banner-icon">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+                </div>
+                <div>
+                    <strong>Model not trained yet</strong>
+                    <p>Run <code>ml_model/train_autoencoder.ipynb</code> on Google Colab, then place
+                    <code>anomaly_model.h5</code> and <code>threshold.npy</code> in <code>backend/models/</code> and restart the server.</p>
+                </div>
+            </div>
+
+            <!-- Detectable categories pills -->
+            <div id="anomalyCategoryPills" class="anomaly-category-pills" style="display:none;"></div>
+
+            <!-- Anomaly alerts grid -->
+            <div class="section-header" style="margin-top:24px;">
+                <h3 style="font-size:1rem;">Anomaly Events</h3>
+                <span class="alert-count" id="anomalyCount">0 events</span>
+            </div>
+            <div class="alerts-grid" id="anomalyAlertsContainer">
+                <div class="empty-state">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M12 22c5.523 0 10-4.477 10-10S17.523 2 12 2 2 6.477 2 12s4.477 10 10 10z"/><path d="M8 14s1.5 2 4 2 4-2 4-2"/><line x1="9" y1="9" x2="9.01" y2="9"/><line x1="15" y1="9" x2="15.01" y2="9"/></svg>
+                    <p>No anomalies detected — all clear!</p>
                 </div>
             </div>
         </section>

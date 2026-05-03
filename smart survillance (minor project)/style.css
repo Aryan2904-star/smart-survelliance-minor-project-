@@ -985,6 +985,40 @@ body {
     font-weight: 500;
 }
 
+/* ─── Alert Media (clip / snapshot) ─────────────────────────── */
+.alert-media {
+    position: relative;
+    background: #000;
+    border-radius: var(--radius) var(--radius) 0 0;
+    overflow: hidden;
+    line-height: 0;
+}
+
+.alert-media video {
+    width: 100%;
+    max-height: 180px;
+    object-fit: cover;
+    display: block;
+    border-radius: 0;
+    background: #000;
+    cursor: pointer;
+}
+
+.clip-badge {
+    position: absolute;
+    top: 8px;
+    right: 8px;
+    background: rgba(0,0,0,0.75);
+    backdrop-filter: blur(6px);
+    color: #fff;
+    font-size: 0.68rem;
+    font-weight: 700;
+    padding: 3px 8px;
+    border-radius: 6px;
+    letter-spacing: 0.04em;
+    pointer-events: none;
+}
+
 /* ─── Empty State ────────────────────────────────────────────── */
 .empty-state {
     grid-column: 1 / -1;
@@ -1002,6 +1036,120 @@ body {
 
 .empty-state p {
     font-size: 0.9rem;
+}
+
+/* ═══════════════════════════════════════════════════════════
+   ANOMALY AI UI
+   ═══════════════════════════════════════════════════════════ */
+
+/* ─── Anomaly alert card ──────────────────────────────────── */
+.anomaly-card {
+    background: rgba(220, 38, 38, 0.04);
+}
+.anomaly-card:hover {
+    border-color: rgba(220, 38, 38, 0.35) !important;
+    box-shadow: 0 8px 32px rgba(220, 38, 38, 0.15);
+}
+
+/* ─── Stats grid: allow 4 columns ───────────────────────────── */
+.stats-grid {
+    grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+}
+
+/* ─── Stat card anomaly glow ───────────────────────────────── */
+.stat-card--anomaly {
+    border-color: rgba(248, 113, 113, 0.18);
+}
+.stat-card--anomaly:hover {
+    border-color: rgba(248, 113, 113, 0.45);
+}
+
+/* ─── Nav badge anomaly variant ─────────────────────────────── */
+.nav-badge--anomaly {
+    background: #dc2626;
+    animation: pulse-nav 1.8s ease-in-out infinite;
+}
+@keyframes pulse-nav {
+    0%, 100% { box-shadow: 0 0 0 0 rgba(220,38,38,0.5); }
+    50%       { box-shadow: 0 0 0 5px rgba(220,38,38,0); }
+}
+
+/* ─── Anomaly model status pill ─────────────────────────────── */
+.anomaly-model-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 5px 14px;
+    border-radius: 20px;
+    font-size: 0.78rem;
+    font-weight: 600;
+    border: 1px solid transparent;
+}
+.anomaly-model-pill--ready {
+    background: rgba(74, 222, 128, 0.10);
+    border-color: rgba(74, 222, 128, 0.25);
+    color: var(--green);
+}
+.anomaly-model-pill--missing {
+    background: rgba(248, 113, 113, 0.10);
+    border-color: rgba(248, 113, 113, 0.25);
+    color: var(--red);
+}
+.anomaly-model-pill--unknown {
+    background: var(--bg-elevated);
+    border-color: var(--border);
+    color: var(--text-muted);
+}
+
+/* ─── Model-not-loaded info banner ──────────────────────────── */
+.anomaly-banner {
+    display: flex;
+    align-items: flex-start;
+    gap: 16px;
+    padding: 18px 20px;
+    background: rgba(251, 146, 60, 0.08);
+    border: 1px solid rgba(251, 146, 60, 0.25);
+    border-radius: var(--radius);
+    margin-bottom: 20px;
+    color: var(--orange);
+    font-size: 0.88rem;
+    line-height: 1.6;
+}
+.anomaly-banner-icon svg {
+    width: 24px;
+    height: 24px;
+    flex-shrink: 0;
+    margin-top: 2px;
+}
+.anomaly-banner strong {
+    display: block;
+    margin-bottom: 4px;
+    font-size: 0.95rem;
+}
+.anomaly-banner code {
+    font-family: 'Courier New', monospace;
+    background: rgba(0,0,0,0.25);
+    padding: 1px 5px;
+    border-radius: 4px;
+    font-size: 0.82rem;
+}
+
+/* ─── Detectable category pills ─────────────────────────────── */
+.anomaly-category-pills {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-bottom: 8px;
+}
+.anomaly-category-pill {
+    padding: 4px 12px;
+    background: rgba(220, 38, 38, 0.10);
+    border: 1px solid rgba(220, 38, 38, 0.22);
+    border-radius: 20px;
+    font-size: 0.75rem;
+    font-weight: 600;
+    color: var(--red);
+    text-transform: capitalize;
 }
 
 /* ═══════════════════════════════════════════════════════════
